@@ -2,6 +2,7 @@ package com.example.amank.locationtracker;
 
 import android.Manifest;
 import android.accounts.AccountManager;
+import android.app.DatePickerDialog;
 import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.content.Context;
@@ -10,17 +11,24 @@ import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.AsyncTask;
+import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.support.v7.widget.DividerItemDecoration;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
 import android.text.TextUtils;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.DatePicker;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.google.android.gms.common.ConnectionResult;
@@ -42,6 +50,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.TimeZone;
@@ -51,109 +60,145 @@ import pub.devrel.easypermissions.EasyPermissions;
 
 public class MainActivity extends AppCompatActivity {
 
-    GoogleAccountCredential mCredential;
-    private TextView mOutputText;
-    private Button mCallApiButton;
-    private Button writeDataButton;
+    public static GoogleAccountCredential mCredential;
     ProgressDialog mProgress;
+
+    private EditText et_from, et_to;
+    private Button submit;
+    private RecyclerView rv_locations;
+
+    private ArrayList<Location> data;
+    private ListAdapter adapter;
 
     static final int REQUEST_ACCOUNT_PICKER = 1000;
     static final int REQUEST_AUTHORIZATION = 1001;
     static final int REQUEST_GOOGLE_PLAY_SERVICES = 1002;
     static final int REQUEST_PERMISSION_GET_ACCOUNTS = 1003;
+    static final int REQUEST_PERMISSION_GET_LOCATION = 1004;
 
     private static final String BUTTON_TEXT = "Call Google Sheets API";
-    private static final String PREF_ACCOUNT_NAME = "accountName";
+    private static final String PREF_ACCOUNT_NAME = "accName";
     private static final String[] SCOPES = {SheetsScopes.SPREADSHEETS};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        LinearLayout activityLayout = new LinearLayout(this);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT);
-        activityLayout.setLayoutParams(lp);
-        activityLayout.setOrientation(LinearLayout.VERTICAL);
-        activityLayout.setPadding(16, 16, 16, 16);
 
-        ViewGroup.LayoutParams tlp = new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
+        setContentView(R.layout.activity_main);
 
-        mCallApiButton = new Button(this);
-        mCallApiButton.setText(BUTTON_TEXT);
-        mCallApiButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                mCallApiButton.setEnabled(false);
-                mOutputText.setText("");
-                getResultsFromApi();
-                mCallApiButton.setEnabled(true);
-            }
-        });
-        activityLayout.addView(mCallApiButton);
-        writeDataButton = new Button(this);
-        writeDataButton.setText("Write Data");
-        writeDataButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                writeDataButton.setEnabled(false);
-                WriteDataTask writeDataTask = new WriteDataTask(mCredential);
-                writeDataTask.execute();
-                writeDataButton.setEnabled(true);
-            }
-        });
-        activityLayout.addView(writeDataButton);
-
-        mOutputText = new TextView(this);
-        mOutputText.setLayoutParams(tlp);
-        mOutputText.setPadding(16, 16, 16, 16);
-        mOutputText.setVerticalScrollBarEnabled(true);
-        mOutputText.setMovementMethod(new ScrollingMovementMethod());
-        mOutputText.setText(
-                "Click the \'" + BUTTON_TEXT + "\' button to test the API.");
-        activityLayout.addView(mOutputText);
-
-        mProgress = new ProgressDialog(this);
-        mProgress.setMessage("Calling Google Sheets API ...");
-
-        setContentView(activityLayout);
 
         mCredential = GoogleAccountCredential.usingOAuth2(getApplicationContext(), Arrays.asList(SCOPES)).setBackOff(new ExponentialBackOff());
+        data =  new ArrayList<>();
+        adapter = new ListAdapter(this, data);
+        checkForPlayServicesAndAccount();
+        Calendar cal = Calendar.getInstance();
+        final int year = cal.get(Calendar.YEAR);
+        final int month = cal.get(Calendar.MONTH);
+        final int day = cal.get(Calendar.DAY_OF_MONTH);
 
-        try {
-            SimpleDateFormat isoFormat = new SimpleDateFormat("HH:mm:ss");
-            isoFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
-            String date = isoFormat.format(new Date());
-            Log.e("Main", date);
-        } catch (Exception e) {
-            Log.e("Main", e.getMessage());
-        }
+        et_from = findViewById(R.id.et_from_date);
+        et_to = findViewById(R.id.et_to_date);
+        submit = findViewById(R.id.but_submit);
+        rv_locations = findViewById(R.id.rv_locations_list);
+
+        RecyclerView.LayoutManager mLayoutManager = new LinearLayoutManager(getApplicationContext());
+        rv_locations.setLayoutManager(mLayoutManager);
+        rv_locations.addItemDecoration(new DividerItemDecoration(this, LinearLayoutManager.VERTICAL));
+        rv_locations.setAdapter(adapter);
+
+        et_from.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                DatePickerDialog datePickerDialog = new DatePickerDialog(
+                        MainActivity.this, new DatePickerDialog.OnDateSetListener() {
+                    @Override
+                    public void onDateSet(DatePicker datePicker, int year, int mon, int day) {
+                        et_from.setText(year + "/" + (mon + 1) + "/" + day);
+                    }
+                }, year, month, day);
+                datePickerDialog.show();
+            }
+        });
+
+        et_to.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                DatePickerDialog datePickerDialog = new DatePickerDialog(
+                        MainActivity.this, new DatePickerDialog.OnDateSetListener() {
+                    @Override
+                    public void onDateSet(DatePicker datePicker, int year, int mon, int day) {
+                        String day1 = null, month = null;
+                        if(day < 10){
+                            day1 = "0" + day;
+                        } else{
+                            day1 = "" + day;
+                        }
+                        if(mon + 1 < 10){
+                            month = "0" + (mon + 1);
+                        } else{
+                            month = "" + (mon + 1);
+                        }
+                        et_to.setText(year + "/" + (month) + "/" + day1);
+                    }
+                }, year, month, day);
+                datePickerDialog.show();
+            }
+        });
+
+
+        submit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    data.clear();
+                    SimpleDateFormat dateFormat = new SimpleDateFormat("yy/MM/dd");
+                    Date start = dateFormat.parse(et_from.getText().toString());
+                    Date end = dateFormat.parse(et_to.getText().toString());
+
+                    DatabaseHandler databaseHandler = new DatabaseHandler(MainActivity.this);
+                    data.addAll(databaseHandler.getAllLocationBetweenStartAndEnd(start.getTime(), end.getTime()));
+
+                    adapter.notifyDataSetChanged();
+                } catch (Exception e) {
+
+                }
+            }
+        });
     }
 
-    private void getResultsFromApi() {
-        if (!isGooglePlayServicesAvailable()) {
+    private void checkForPlayServicesAndAccount() {
+        if(!checkLocationPermission()){
+            EasyPermissions.requestPermissions(this, "This app needs to access your location ", REQUEST_PERMISSION_GET_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION);
+        } else if (!isGooglePlayServicesAvailable()) {
             acquireGooglePlayServices();
         } else if (mCredential.getSelectedAccountName() == null) {
             chooseAccount();
         } else if (!isDeviceOnline()) {
-            mOutputText.setText("No network connection available.");
+            Toast.makeText(this, "Please check your internet connection and try again!," , Toast.LENGTH_LONG).show();
         } else {
-            new WriteDataTask(mCredential).execute();
+            Util.scheduleJob(this);
+            Util.scheduleUploadJob(this);
         }
+    }
+
+    private boolean checkLocationPermission(){
+        if (EasyPermissions.hasPermissions(
+                this, Manifest.permission.ACCESS_FINE_LOCATION )) {
+            return true;
+        }
+        return false;
     }
 
 
     @AfterPermissionGranted(REQUEST_PERMISSION_GET_ACCOUNTS)
     private void chooseAccount() {
         if (EasyPermissions.hasPermissions(
-                this, Manifest.permission.GET_ACCOUNTS)) {
-            String accountName = getPreferences(Context.MODE_PRIVATE)
-                    .getString(PREF_ACCOUNT_NAME, null);
+                this, Manifest.permission.GET_ACCOUNTS )) {
+            SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+            String accountName = preferences.getString(PREF_ACCOUNT_NAME, null);
             if (accountName != null) {
                 mCredential.setSelectedAccountName(accountName);
-                getResultsFromApi();
+                checkForPlayServicesAndAccount();
             } else {
                 startActivityForResult(mCredential.newChooseAccountIntent(), REQUEST_ACCOUNT_PICKER);
             }
@@ -169,10 +214,10 @@ public class MainActivity extends AppCompatActivity {
         switch (requestCode) {
             case REQUEST_GOOGLE_PLAY_SERVICES:
                 if (resultCode != RESULT_OK) {
-                    mOutputText.setText("This app requires Google Play Services. Please install " +
-                            "Google Play Services on your device and relaunch this app.");
+
+                    checkForPlayServicesAndAccount();
                 } else {
-                    getResultsFromApi();
+
                 }
                 break;
             case REQUEST_ACCOUNT_PICKER:
@@ -181,19 +226,20 @@ public class MainActivity extends AppCompatActivity {
                     String accountName =
                             data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
                     if (accountName != null) {
-                        SharedPreferences settings =
-                                getPreferences(Context.MODE_PRIVATE);
-                        SharedPreferences.Editor editor = settings.edit();
+                        SharedPreferences preferences =
+                                PreferenceManager.getDefaultSharedPreferences(this);
+                        SharedPreferences.Editor editor = preferences.edit();
                         editor.putString(PREF_ACCOUNT_NAME, accountName);
                         editor.apply();
                         mCredential.setSelectedAccountName(accountName);
-                        getResultsFromApi();
+
+                        checkForPlayServicesAndAccount();
                     }
                 }
                 break;
             case REQUEST_AUTHORIZATION:
                 if (resultCode == RESULT_OK) {
-                    getResultsFromApi();
+                    checkForPlayServicesAndAccount();
                 }
                 break;
         }
@@ -205,8 +251,11 @@ public class MainActivity extends AppCompatActivity {
                                            @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        EasyPermissions.onRequestPermissionsResult(
-                requestCode, permissions, grantResults, this);
+        if(requestCode == REQUEST_PERMISSION_GET_LOCATION) {
+            EasyPermissions.onRequestPermissionsResult(
+                    requestCode, permissions, grantResults, this);
+        }
+        checkForPlayServicesAndAccount();
     }
 
 
@@ -245,7 +294,7 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private class MakeRequestTask extends AsyncTask<Void, Void, List<String>> {
+    /*private class MakeRequestTask extends AsyncTask<Void, Void, List<String>> {
         private com.google.api.services.sheets.v4.Sheets mService = null;
         private Exception mLastError = null;
 
@@ -326,9 +375,9 @@ public class MainActivity extends AppCompatActivity {
                 mOutputText.setText("Request cancelled.");
             }
         }
-    }
+    }*/
 
-    private class WriteDataTask extends AsyncTask<Void, Void, List<String>> {
+   /* private class WriteDataTask extends AsyncTask<Void, Void, List<String>> {
         private com.google.api.services.sheets.v4.Sheets mService = null;
         private Exception mLastError = null;
 
@@ -373,7 +422,9 @@ public class MainActivity extends AppCompatActivity {
                             .execute();
             System.out.printf("%d cells updated.", result.getUpdates().getUpdatedRows());
         }
-    }
+    }*/
+
+
 
 }
 

@@ -10,14 +10,32 @@ import android.location.Address;
 import android.location.Criteria;
 import android.location.Geocoder;
 import android.location.Location;
-import android.location.LocationListener;
 import android.location.LocationManager;
+import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
+import android.util.Log;
 import android.widget.TextView;
+
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationServices;
+import com.google.api.client.extensions.android.http.AndroidHttp;
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential;
+import com.google.api.client.http.HttpTransport;
+import com.google.api.client.json.jackson2.JacksonFactory;
+import com.google.api.services.sheets.v4.model.AppendValuesResponse;
+import com.google.api.services.sheets.v4.model.ValueRange;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -27,15 +45,23 @@ import java.util.TimeZone;
  * Created by amank on 04-12-2017.
  */
 
-public class LocationService extends JobService implements LocationListener {
-    private LocationManager locationManager;
-    private String provider;
+public class LocationService extends JobService implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, LocationListener {
     private Location location;
     private String address;
+    private JobParameters params;
+    private static GoogleApiClient mGoogleApiClient;
+    private static LocationRequest mLocationRequest;
+    private LocationListener listener;
+
+    public static final long UPDATE_INTERVAL_IN_MILLISECONDS = 10000;
+    public static final long FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS = UPDATE_INTERVAL_IN_MILLISECONDS / 2;
 
     @Override
     public boolean onStartJob(JobParameters jobParameters) {
-        getLocation();
+        Log.e("Job", " ----------------------------- Location Job Started");
+        this.params = jobParameters;
+        listener = this;
+        buildGoogleApiClient();
         return true;
     }
 
@@ -44,14 +70,47 @@ public class LocationService extends JobService implements LocationListener {
         return true;
     }
 
-    private void getLocation(){
-        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+    protected synchronized void buildGoogleApiClient() {
+        if(mGoogleApiClient == null) {
+            mGoogleApiClient = new GoogleApiClient.Builder(this)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .addApi(LocationServices.API)
+                    .build();
 
-        Criteria criteria = new Criteria();
-        provider = locationManager.getBestProvider(criteria, false);
-        if(checkPermission()) {
-            locationManager.requestLocationUpdates(provider, 0, 0, this);
+            mGoogleApiClient.connect();
+            createLocationRequest();
         }
+        else if (mGoogleApiClient.isConnected()) {
+            getLocation();
+        } else {
+            mGoogleApiClient.connect();
+            createLocationRequest();
+        }
+    }
+
+    protected void createLocationRequest() {
+        mLocationRequest = new LocationRequest();
+        mLocationRequest.setInterval(UPDATE_INTERVAL_IN_MILLISECONDS);
+        mLocationRequest.setFastestInterval(FASTEST_UPDATE_INTERVAL_IN_MILLISECONDS);
+        mLocationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
+    }
+
+    private void getLocation() {
+        if (checkPermission()) {
+            LocationServices.FusedLocationApi.requestLocationUpdates(mGoogleApiClient, mLocationRequest, this);
+        }
+        Handler handler = new Handler();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+
+                if (location == null) {
+                    LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, listener);
+                    jobFinished(params, true);
+                }
+            }
+        }, 20000);
 
 
     }
@@ -59,26 +118,11 @@ public class LocationService extends JobService implements LocationListener {
     @Override
     public void onLocationChanged(Location location) {
         this.location = location;
-        locationManager.removeUpdates(this);
+        LocationServices.FusedLocationApi.removeLocationUpdates(mGoogleApiClient, this);
         getAddress();
     }
 
-    @Override
-    public void onStatusChanged(String s, int i, Bundle bundle) {
-
-    }
-
-    @Override
-    public void onProviderEnabled(String s) {
-
-    }
-
-    @Override
-    public void onProviderDisabled(String s) {
-
-    }
-
-    private void getAddress(){
+    private void getAddress() {
         Geocoder gc = new Geocoder(this, Locale.getDefault());
 
         try {
@@ -89,38 +133,61 @@ public class LocationService extends JobService implements LocationListener {
             if (addresses.size() > 0) {
                 Address address = addresses.get(0);
 
-                for (int i = 0; i < address.getMaxAddressLineIndex(); i++)
-                    sb.append(address.getAddressLine(i)).append("\n");
+                for(int i = 0; i <= address.getMaxAddressLineIndex(); i++){
+                    sb.append(address.getAddressLine(i));
+                }
 
-                sb.append(address.getCountryName());
             }
             address = sb.toString();
+            Log.e("Job", "-------------------" + address.toLowerCase());
         } catch (IOException e) {
+            Log.e("Job", "-------------------" + e.getMessage());
         }
-        if(address != null && !address.isEmpty()){
+        if (address != null && !address.isEmpty()) {
             com.example.amank.locationtracker.Location location = new com.example.amank.locationtracker.Location();
             location.setAddress(address);
-try {
-    SimpleDateFormat isoFormat = new SimpleDateFormat("HH:mm:ss");
-    isoFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
-    Date date = isoFormat.parse(new Date(System.currentTimeMillis()).toString());
-    location.setTime(date.toString());
+            try {
+                SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
+                SimpleDateFormat dateFormat = new SimpleDateFormat("dd MMM, yyyy");
+                timeFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+                dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Kolkata"));
+                String timeNow = timeFormat.format(new Date());
+                String dateNow = dateFormat.format(new Date());
+                location.setTime(timeNow);
+                location.setDate(dateNow);
 
-    DatabaseHandler databaseHandler = new DatabaseHandler(this);
-    databaseHandler.addLocation(location);
+                DatabaseHandler databaseHandler = new DatabaseHandler(this);
+                databaseHandler.addLocation(location);
 
-} catch (Exception e){
+            } catch (Exception e) {
 
-}
+            }
 
         }
-        jobFinished(null, true);
+        jobFinished(params, true);
     }
 
-    private boolean checkPermission(){
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED){
+    private boolean checkPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             return true;
         }
         return false;
     }
+
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
+        getLocation();
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+        mGoogleApiClient.connect();
+    }
+
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+
+    }
+
+
 }

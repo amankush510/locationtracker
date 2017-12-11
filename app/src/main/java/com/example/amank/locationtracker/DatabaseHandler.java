@@ -20,8 +20,10 @@ public class DatabaseHandler extends SQLiteOpenHelper {
     private static final String TABLE_LOCATIONS = "locations";
 
     private static final String KEY_ID = "id";
+    private static final String KEY_DATE = "date";
     private static final String KEY_TIME = "time";
     private static final String KEY_ADDRESS = "address";
+    private static final String KEY_CREATED_AT = "createdAt";
 
     public DatabaseHandler(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -30,8 +32,8 @@ public class DatabaseHandler extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase db) {
         String CREATE_CONTACTS_TABLE = "CREATE TABLE " + TABLE_LOCATIONS + "("
-                + KEY_ID + " INTEGER PRIMARY KEY," + KEY_TIME + " TEXT,"
-                + KEY_ADDRESS + " TEXT" + ")";
+                + KEY_ID + " INTEGER PRIMARY KEY, " + KEY_DATE + " TEXT, "  + KEY_TIME + " TEXT,"  + KEY_ADDRESS + " TEXT,"
+                + KEY_CREATED_AT + " INTEGER" + ")";
         db.execSQL(CREATE_CONTACTS_TABLE);
     }
 
@@ -45,17 +47,18 @@ public class DatabaseHandler extends SQLiteOpenHelper {
         SQLiteDatabase db = this.getWritableDatabase();
 
         ContentValues values = new ContentValues();
+        values.put(KEY_DATE, location.getDate());
         values.put(KEY_TIME, location.getTime());
         values.put(KEY_ADDRESS, location.getAddress());
-
+        values.put(KEY_CREATED_AT, System.currentTimeMillis());
         db.insert(TABLE_LOCATIONS, null, values);
         db.close();
     }
 
-    public List<Location> getAllContacts(Long startTime, Long endTime) {
+    public List<Location> getAllLocations(Long time) {
         List<Location> locationsList = new ArrayList<Location>();
 
-        String selectQuery = "SELECT  * FROM " + TABLE_LOCATIONS + " where " + KEY_TIME + ">=" +startTime + " and " +KEY_TIME + " <= " + endTime;
+        String selectQuery = "SELECT  * FROM " + TABLE_LOCATIONS + " where " + KEY_CREATED_AT + " < " + time + " ORDER BY " + KEY_CREATED_AT + " DESC ";
 
         SQLiteDatabase db = this.getWritableDatabase();
         Cursor cursor = db.rawQuery(selectQuery, null);
@@ -63,8 +66,30 @@ public class DatabaseHandler extends SQLiteOpenHelper {
         if (cursor.moveToFirst()) {
             do {
                 Location location = new Location();
-                location.setTime(cursor.getString(1));
-                location.setAddress(cursor.getString(2));
+                location.setDate(cursor.getString(1));
+                location.setTime(cursor.getString(2));
+                location.setAddress(cursor.getString(3));
+                locationsList.add(location);
+            } while (cursor.moveToNext());
+        }
+
+        return locationsList;
+    }
+
+    public List<Location> getAllLocationBetweenStartAndEnd(Long start, Long end) {
+        List<Location> locationsList = new ArrayList<Location>();
+
+        String selectQuery = "SELECT  * FROM " + TABLE_LOCATIONS + " where " + KEY_CREATED_AT + " >= " + start + " and " + KEY_CREATED_AT + " <= " + end + " ORDER BY " + KEY_CREATED_AT + " DESC";
+
+        SQLiteDatabase db = this.getWritableDatabase();
+        Cursor cursor = db.rawQuery(selectQuery, null);
+
+        if (cursor.moveToFirst()) {
+            do {
+                Location location = new Location();
+                location.setDate(cursor.getString(1));
+                location.setTime(cursor.getString(2));
+                location.setAddress(cursor.getString(3));
                 locationsList.add(location);
             } while (cursor.moveToNext());
         }

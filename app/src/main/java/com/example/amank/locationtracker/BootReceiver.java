@@ -13,5 +13,6 @@ public class BootReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         Util.scheduleJob(context);
+        Util.scheduleUploadJob(context);
     }
 }
